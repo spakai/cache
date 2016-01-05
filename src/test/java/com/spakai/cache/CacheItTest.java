@@ -11,10 +11,6 @@ import org.junit.rules.ExpectedException;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class CacheItTest {
   @Rule
@@ -22,30 +18,43 @@ public class CacheItTest {
   
   private CacheIt<Long, Long> cache ;
   
-  private Lock lock; 
-  
-  private Condition wasExecuted;
-  
   Long counter;
     
   @Before
   public void setup() {
-    cache = new CacheIt<Long, Long>(10);
-    lock = new ReentrantLock();
-    wasExecuted  = lock.newCondition();
     counter = 0L;
   }
-  
-  @Test
-  public void cacheIsEmpty() throws InterruptedException, ExecutionException {
-    Future<Long> future = cache.get(1L, new Callable<Long>() {
+
+  public Future<Long> IncrementsCountersIfNotInCache(Long key) {
+    Future<Long> future = cache.get(key, new Callable<Long>() {
       @Override
       public Long call() throws Exception {
-    	  Thread.sleep(10000); 
-    	  counter += 1L;
-    	  return counter; 
+        counter += 1L;
+        return counter;
       }
     });
+
+    return future;
+  }
+
+  public Future<Long> DoesnotIncrementCounterReturnsKeyAsValue(Long key) {
+    Future<Long> future = cache.get(key, new Callable<Long>() {
+      @Override
+      public Long call() throws Exception {
+        return key;
+      }
+    });
+
+    return future;
+  }
+
+
+
+  @Test
+  public void cacheIsEmpty() throws InterruptedException, ExecutionException {
+    cache = new CacheIt<Long, Long>(10);
+
+    Future<Long> future = IncrementsCountersIfNotInCache(1L);
     
     assertThat(future.get(), is(1L));
     
@@ -53,17 +62,63 @@ public class CacheItTest {
   
   @Test
   public void cacheIsNotEmptyOnTheSecondCall() throws InterruptedException, ExecutionException {
-    Future<Long> future = cache.get(1L, new Callable<Long>() {
-      @Override
-      public Long call() throws Exception {
-      Thread.sleep(10000); 
-      counter += 1L;
-        return counter; 
-      }
-    });
-    
+    cache = new CacheIt<Long, Long>(10);
+
+    Future<Long> future = IncrementsCountersIfNotInCache(1L);
+
     assertThat(future.get(), is(1L));
     assertThat(future.get(), is(1L));
     
+  }
+
+  @Test
+  public void cacheIsClearedOnceItHitsLimit() throws InterruptedException, ExecutionException {
+
+    //create a cache that will clear all (100%) once the size hits above 3
+    cache = new CacheIt<Long, Long>(10,100,3,1);
+
+    IncrementsCountersIfNotInCache(1L);
+
+    IncrementsCountersIfNotInCache(2L);
+
+    IncrementsCountersIfNotInCache(3L);
+
+    assertThat(cache.size(), is(3));
+
+    //Make all keys expire
+    Thread.sleep(2000);
+
+    //This call clears the cache
+    DoesnotIncrementCounterReturnsKeyAsValue(100L);
+
+    assertThat(cache.size(), is(1));
+
+    Future<Long> future = IncrementsCountersIfNotInCache(3L);
+
+    assertThat(future.get(), is(4L));
+  }
+
+  @Test
+  public void cacheIsNotClearedOnceItHitsSizeLimitBecauseOfStayAliveTimings() throws InterruptedException, ExecutionException {
+
+    //create a cache that will not clear for an hour
+    cache = new CacheIt<Long, Long>(10,100,3,3600);
+
+    IncrementsCountersIfNotInCache(1L);
+
+    IncrementsCountersIfNotInCache(2L);
+
+    IncrementsCountersIfNotInCache(3L);
+
+    assertThat(cache.size(), is(3));
+
+    //This call will try to clear the cache
+    DoesnotIncrementCounterReturnsKeyAsValue(100L);
+
+    assertThat(cache.size(), is(4));
+
+    Future<Long> future = IncrementsCountersIfNotInCache(3L);
+
+    assertThat(future.get(), is(3L));
   }
 }

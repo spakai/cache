@@ -1,5 +1,6 @@
 package com.spakai.cache;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -12,92 +13,106 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 public class CacheIt<K, V> {
-  
+
   private final ConcurrentMap<K, Future<V>> cache = new ConcurrentHashMap<>();
-  
-  private final Map<K,Instant> lastAccessTimeKeeper = new HashMap<>();
-  
-  private final ExecutorService pool; 
-  
+
+  private final Map<K, Instant> lastAccessTimeKeeper = new HashMap<>();
+
+  private final ExecutorService pool;
+
   private final double percentageForCleanup;
-  
+
   private final long maxSize;
-  
+
   private volatile boolean cleanupInProgress = false;
-  
-  
+
+  private long cacheStayAliveTimeInSecs;
+
   /**
-   * Sets the size of Java Thread pool and sets default values for percentageForCleanup and maxSize.
-   * 
-   * @param numberOfThreads Number of Threads in the Thread Pool.
-   * 
+  * Sets the size of Java Thread pool and sets default values for percentageForCleanup ,maxSize, cacheStayAliveTimeInSecs
+  *
+  * @param numberOfThreads Number of Threads in the Thread Pool.
   */
   public CacheIt(int numberOfThreads) {
-    this.percentageForCleanup = 0.01;
+    this.percentageForCleanup = 1;
     this.maxSize = 10000L;
+    this.cacheStayAliveTimeInSecs = 60 * 60;
     pool = Executors.newFixedThreadPool(numberOfThreads);
   }
-  
+
   /**
-   * Sets the size of Java Thread pool , values for percentageForCleanup and maxSize.
-   * 
-   * @param numberOfThreads Number of Threads in the Thread Pool.
-   * 
+  * Sets the size of Java Thread pool , values for percentageForCleanup,maxSize 
+  * and cacheStayAliveTimeInSecs
+  *
+  * @param numberOfThreads Number of Threads in the Thread Pool.
+  * @param percentageForCleanup Percentage of total cache that should be cleaned up
+  * @param maxSize Maximum size of the cache
+  * @param cacheStayAliveTimeInSecs Number of seconds an entry can stay in a cache
   */
-  public CacheIt(int numberOfThreads, double percentage_for_cleanup, long maxSize) {
-    this.percentageForCleanup = percentage_for_cleanup;
+  public CacheIt(int numberOfThreads, double percentageForCleanup, long maxSize, 
+      long cacheStayAliveTimeInSecs) {
+    this.percentageForCleanup = percentageForCleanup;
     this.maxSize = maxSize;
+    this.cacheStayAliveTimeInSecs = cacheStayAliveTimeInSecs;
     pool = Executors.newFixedThreadPool(numberOfThreads);
   }
-  
+
   /**
-   * Gets the value from cache if possible , otherwise runs the callable logic in a thread pool
-   * and pushes the Future object into the cache. Another get() call with the same key will then get
-   * the same Future object returned regardless whether the logic has completed. This ensures that the same 
-   * logic doesn't get computed twice. Whenever an item is pushed to the cache, removeLeastRecentlyUsedEntries()
-   * is called to cleanup the cache.
-   * 
-   * @param key Unique key to retrieve or push to cache.
-   * @param callable business logic calls.
-   * @return Future<V> returns the Future object so that the client can call Future.get() to get the result.
+  * Gets the value from cache if possible , otherwise runs the callable logic in a thread pool
+  * and pushes the Future object into the cache. Another get() call with the same key will then get
+  * the same Future object returned regardless whether the logic has completed. This ensures that the same
+  * logic doesn't get computed twice. Whenever an item is pushed to the cache, removeLeastRecentlyUsedEntries()
+  * is called to cleanup the cache.
+  *
+  * @param key      Unique key to retrieve or push to cache.
+  * @param callable business logic calls.
+  * @return Future<V> returns the Future object so that the client can call Future.get() to get the result.
   */
   public Future<V> get(K key, Callable<V> callable) {
     Future<V> future = cache.get(key);
-    if (future == null) {
-    	try {
-	      future = pool.submit(callable);
-	      cache.putIfAbsent(key, future);
-	      
-	      if(!cleanupInProgress) {
-	    	  cleanupInProgress=true;
-	    	  removeLeastRecentlyUsedEntries();
-	    	  cleanupInProgress=false;
-	      }
-	      
-	    } catch(CancellationException e) {
-	    	cache.remove(key);
-	    } 
-	}
-    
+    if (future == null) { 
+      try {
+        future = pool.submit(callable);
+        cache.putIfAbsent(key, future);
+
+        if (!cleanupInProgress) {
+          cleanupInProgress = true;
+          removeLeastRecentlyUsedEntries();
+          cleanupInProgress = false;
+        }
+
+      } catch (CancellationException e) {
+        cache.remove(key);
+      }
+
     //overwrites same key so last access time is updated
-    lastAccessTimeKeeper.put(key, Instant.now());
-    
+      lastAccessTimeKeeper.put(key, Instant.now());
+    }
+
     return future;
   }
-  
+
   /**
-   * Removes X least used entries from the cache. 
-   * X 's value is calculated as percentage_for_cleanup * maxSize which is defined during creation of cache
-   * On its default setting , when the cache reaches more than 10k in size , 100 LRU entries will be removed
+  * Removes X least used entries from the cache if it has exceeded cacheStayAliveTimeInSecs.
+  * X 's value is calculated as percentage_for_cleanup * maxSize which is defined during creation of cache.
+  * On its default setting , when the cache reaches more than 10k in size , 100 LRU entries will be removed.
   */
-  
+
   private void removeLeastRecentlyUsedEntries() {
-	  if(cache.size() > maxSize) {
-		  lastAccessTimeKeeper.entrySet().stream()
-		    .sorted(Map.Entry.comparingByValue())
-		    .limit((long) (percentageForCleanup * maxSize))
-		    .forEach(entry ->  cache.remove(entry.getKey()));
-	  }
+    if (size() > maxSize) {
+      lastAccessTimeKeeper.entrySet().stream()
+      .sorted(Map.Entry.comparingByValue())
+      .filter(entry -> hasExpired(entry.getValue()))
+      .limit((long) ((percentageForCleanup / 100) * maxSize))
+      .forEach(entry -> cache.remove(entry.getKey()));
+    }
+  }
+
+  private boolean hasExpired(Instant instant) {
+    return (Duration.between(instant, Instant.now()).toMillis() * 0.001 > cacheStayAliveTimeInSecs);
+  }
+
+  public int size() {
+    return cache.size();
   }
 }
-
