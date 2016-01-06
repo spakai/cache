@@ -4,6 +4,7 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
 
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -47,8 +48,6 @@ public class CacheItTest {
 
     return future;
   }
-
-
 
   @Test
   public void cacheIsEmpty() throws InterruptedException, ExecutionException {
@@ -112,7 +111,7 @@ public class CacheItTest {
 
     assertThat(cache.size(), is(3));
 
-    //This call will try to clear the cache
+    //This call will try to clear the cache but it won't because of StayAliveTimings
     DoesnotIncrementCounterReturnsKeyAsValue(100L);
 
     assertThat(cache.size(), is(4));
@@ -120,5 +119,34 @@ public class CacheItTest {
     Future<Long> future = IncrementsCountersIfNotInCache(3L);
 
     assertThat(future.get(), is(3L));
+  }
+
+  @Test
+  public void cacheClearsLeastRecentlyUsed() throws InterruptedException, ExecutionException {
+
+    cache = new CacheIt<Long, Long>(10,98,100,5);
+
+    for(long key=1L; key<101L;key++) {
+      IncrementsCountersIfNotInCache(key);
+    }
+
+    assertThat(cache.size(), is(100));
+
+    //get key 55L, make it recently used
+    IncrementsCountersIfNotInCache(55L);
+    Thread.sleep(1000);
+    IncrementsCountersIfNotInCache(55L);
+    Thread.sleep(5000);
+
+    //trigger cleanup
+    DoesnotIncrementCounterReturnsKeyAsValue(200L);
+
+    //98% of 100 is 2 , plus entry with key=200L is 3
+    assertThat(cache.size(), is(2 + 1));
+
+    Future<Long> future = IncrementsCountersIfNotInCache(55L);
+
+    assertThat(future.get(), is(55L));
+
   }
 }

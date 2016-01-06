@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CacheIt<K, V> {
 
@@ -24,7 +25,7 @@ public class CacheIt<K, V> {
 
   private final long maxSize;
 
-  private volatile boolean cleanupInProgress = false;
+  private AtomicBoolean cleanupInProgress;
 
   private long cacheStayAliveTimeInSecs;
 
@@ -34,10 +35,11 @@ public class CacheIt<K, V> {
   * @param numberOfThreads Number of Threads in the Thread Pool.
   */
   public CacheIt(int numberOfThreads) {
-    this.percentageForCleanup = 1;
+    this.percentageForCleanup = 10;
     this.maxSize = 10000L;
     this.cacheStayAliveTimeInSecs = 60 * 60;
     pool = Executors.newFixedThreadPool(numberOfThreads);
+    cleanupInProgress = new AtomicBoolean(false);
   }
 
   /**
@@ -55,6 +57,7 @@ public class CacheIt<K, V> {
     this.maxSize = maxSize;
     this.cacheStayAliveTimeInSecs = cacheStayAliveTimeInSecs;
     pool = Executors.newFixedThreadPool(numberOfThreads);
+    cleanupInProgress = new AtomicBoolean(false);
   }
 
   /**
@@ -75,19 +78,21 @@ public class CacheIt<K, V> {
         future = pool.submit(callable);
         cache.putIfAbsent(key, future);
 
-        if (!cleanupInProgress) {
-          cleanupInProgress = true;
+        if (!cleanupInProgress.get()) {
+          cleanupInProgress.set(true);
           removeLeastRecentlyUsedEntries();
-          cleanupInProgress = false;
+          cleanupInProgress.set(false);
         }
 
       } catch (CancellationException e) {
-        cache.remove(key);
+          cache.remove(key);
       }
 
-    //overwrites same key so last access time is updated
-      lastAccessTimeKeeper.put(key, Instant.now());
+
     }
+
+    //overwrites same key so last access time is updated
+    lastAccessTimeKeeper.put(key, Instant.now());
 
     return future;
   }
@@ -95,16 +100,20 @@ public class CacheIt<K, V> {
   /**
   * Removes X least used entries from the cache if it has exceeded cacheStayAliveTimeInSecs.
   * X 's value is calculated as percentage_for_cleanup * maxSize which is defined during creation of cache.
-  * On its default setting , when the cache reaches more than 10k in size , 100 LRU entries will be removed.
+  * On its default setting , when the cache reaches more than 10k in size , 100 LRU entries will be removed
+  * but only if it has expired i.e > cacheStayAliveTimeInSecs.
   */
 
   private void removeLeastRecentlyUsedEntries() {
     if (size() > maxSize) {
       lastAccessTimeKeeper.entrySet().stream()
       .sorted(Map.Entry.comparingByValue())
-      .filter(entry -> hasExpired(entry.getValue()))
       .limit((long) ((percentageForCleanup / 100) * maxSize))
-      .forEach(entry -> cache.remove(entry.getKey()));
+      .filter(entry -> hasExpired(entry.getValue()))
+      .forEach(entry -> {
+        cache.remove(entry.getKey());
+        lastAccessTimeKeeper.remove(entry.getKey());
+      });
     }
   }
 
@@ -115,4 +124,5 @@ public class CacheIt<K, V> {
   public int size() {
     return cache.size();
   }
+
 }
