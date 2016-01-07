@@ -4,7 +4,6 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertThat;
 
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -19,39 +18,35 @@ public class CacheItTest {
   
   private CacheIt<Long, Long> cache ;
   
-  Long counter;
+  private Long counter;
     
   @Before
   public void setup() {
     counter = 0L;
   }
 
-  public Future<Long> IncrementsCountersIfNotInCache(Long key) {
-    Future<Long> future = cache.get(key, new Callable<Long>() {
-      @Override
-      public Long call() throws Exception {
-        counter += 1L;
-        return counter;
-      }
+  private Future<Long> LongRunningTasksThatIncrementsCountersIfNotInCache(Long key) {
+    return cache.get(key, () -> {
+      Thread.sleep(5000);
+      counter += 1L;
+      return counter;
     });
-
-    return future;
   }
 
-  public Future<Long> DoesnotIncrementCounterReturnsKeyAsValue(Long key) {
-    Future<Long> future = cache.get(key, new Callable<Long>() {
-      @Override
-      public Long call() throws Exception {
-        return key;
-      }
+  private Future<Long> IncrementsCountersIfNotInCache(Long key) {
+    return cache.get(key, () -> {
+      counter += 1L;
+      return counter;
     });
+  }
 
-    return future;
+  private Future<Long>  DoesNotIncrementCounterReturnsKeyAsValue(Long key) {
+    return cache.get(key, () -> key);
   }
 
   @Test
   public void cacheIsEmpty() throws InterruptedException, ExecutionException {
-    cache = new CacheIt<Long, Long>(10);
+    cache = new CacheIt<>(10);
 
     Future<Long> future = IncrementsCountersIfNotInCache(1L);
     
@@ -61,7 +56,7 @@ public class CacheItTest {
   
   @Test
   public void cacheIsNotEmptyOnTheSecondCall() throws InterruptedException, ExecutionException {
-    cache = new CacheIt<Long, Long>(10);
+    cache = new CacheIt<>(10);
 
     Future<Long> future = IncrementsCountersIfNotInCache(1L);
 
@@ -71,10 +66,22 @@ public class CacheItTest {
   }
 
   @Test
+  public void cacheDoesNotExecuteDuplicateKey() throws InterruptedException, ExecutionException  {
+    cache = new CacheIt<>(10);
+
+    Future<Long> future1 = LongRunningTasksThatIncrementsCountersIfNotInCache(1L);
+    Future<Long> future2 = LongRunningTasksThatIncrementsCountersIfNotInCache(1L);
+
+    assertThat(future1.get(), is(1L));
+    assertThat(future2.get(), is(1L));
+
+  }
+
+  @Test
   public void cacheIsClearedOnceItHitsLimit() throws InterruptedException, ExecutionException {
 
     //create a cache that will clear all (100%) once the size hits above 3
-    cache = new CacheIt<Long, Long>(10,100,3,1);
+    cache = new CacheIt<>(10, 100, 3, 1);
 
     IncrementsCountersIfNotInCache(1L);
 
@@ -88,7 +95,7 @@ public class CacheItTest {
     Thread.sleep(2000);
 
     //This call clears the cache
-    DoesnotIncrementCounterReturnsKeyAsValue(100L);
+    DoesNotIncrementCounterReturnsKeyAsValue(100L);
 
     assertThat(cache.size(), is(1));
 
@@ -101,7 +108,7 @@ public class CacheItTest {
   public void cacheIsNotClearedOnceItHitsSizeLimitBecauseOfStayAliveTimings() throws InterruptedException, ExecutionException {
 
     //create a cache that will not clear for an hour
-    cache = new CacheIt<Long, Long>(10,100,3,3600);
+    cache = new CacheIt<>(10, 100, 3, 3600);
 
     IncrementsCountersIfNotInCache(1L);
 
@@ -112,7 +119,7 @@ public class CacheItTest {
     assertThat(cache.size(), is(3));
 
     //This call will try to clear the cache but it won't because of StayAliveTimings
-    DoesnotIncrementCounterReturnsKeyAsValue(100L);
+    DoesNotIncrementCounterReturnsKeyAsValue(100L);
 
     assertThat(cache.size(), is(4));
 
@@ -124,7 +131,7 @@ public class CacheItTest {
   @Test
   public void cacheClearsLeastRecentlyUsed() throws InterruptedException, ExecutionException {
 
-    cache = new CacheIt<Long, Long>(10,98,100,5);
+    cache = new CacheIt<>(10, 98, 100, 5);
 
     for(long key=1L; key<101L;key++) {
       IncrementsCountersIfNotInCache(key);
@@ -133,20 +140,24 @@ public class CacheItTest {
     assertThat(cache.size(), is(100));
 
     //get key 55L, make it recently used
-    IncrementsCountersIfNotInCache(55L);
     Thread.sleep(1000);
     IncrementsCountersIfNotInCache(55L);
     Thread.sleep(5000);
 
     //trigger cleanup
-    DoesnotIncrementCounterReturnsKeyAsValue(200L);
+    DoesNotIncrementCounterReturnsKeyAsValue(200L);
 
-    //98% of 100 is 2 , plus entry with key=200L is 3
+    //(100-98%) 2% of 100 is 2 , plus entry with key=200L is 3
     assertThat(cache.size(), is(2 + 1));
 
     Future<Long> future = IncrementsCountersIfNotInCache(55L);
 
     assertThat(future.get(), is(55L));
+
+  }
+
+  @Test
+  public void multipleClientsStress() {
 
   }
 }
