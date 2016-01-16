@@ -109,8 +109,7 @@ public class CacheIt<K, V> {
   */
   private void possibleCleanup() {
     if (Duration.between(lastCleanup, Instant.now()).toMillis() > cacheStayAliveTimeInSecs * 0.001) {
-      if (!cleanupInProgress.get()) {
-        cleanupInProgress.set(true);
+      if (cleanupInProgress.compareAndSet(false, true)) {
         removeLeastUsedEntries();
         cleanupInProgress.set(false);
         lastCleanup = Instant.now();
