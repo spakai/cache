@@ -15,11 +15,11 @@ import java.util.concurrent.Future;
 public class CacheItTest {
   @Rule
   public ExpectedException thrown = ExpectedException.none();
-  
+
   private CacheIt<Long, Long> cache ;
-  
+
   private Long counter;
-    
+
   @Before
   public void setup() {
     counter = 0L;
@@ -49,11 +49,11 @@ public class CacheItTest {
     cache = new CacheIt<>(10);
 
     Future<Long> future = IncrementsCountersIfNotInCache(1L);
-    
+
     assertThat(future.get(), is(1L));
-    
+
   }
-  
+
   @Test
   public void cacheIsNotEmptyOnTheSecondCall() throws InterruptedException, ExecutionException {
     cache = new CacheIt<>(10);
@@ -62,7 +62,7 @@ public class CacheItTest {
 
     assertThat(future.get(), is(1L));
     assertThat(future.get(), is(1L));
-    
+
   }
 
   @Test
@@ -89,7 +89,7 @@ public class CacheItTest {
 
     IncrementsCountersIfNotInCache(3L);
 
-    assertThat(cache.size(), is(3));
+    assertThat(cache.size(), is(3L));
 
     //Make all keys expire
     Thread.sleep(2000);
@@ -97,7 +97,7 @@ public class CacheItTest {
     //This call clears the cache
     DoesNotIncrementCounterReturnsKeyAsValue(100L);
 
-    assertThat(cache.size(), is(1));
+    assertThat(cache.size(), is(1L));
 
     Future<Long> future = IncrementsCountersIfNotInCache(3L);
 
@@ -116,12 +116,12 @@ public class CacheItTest {
 
     IncrementsCountersIfNotInCache(3L);
 
-    assertThat(cache.size(), is(3));
+    assertThat(cache.size(), is(3L));
 
     //This call will try to clear the cache but it won't because of StayAliveTimings
     DoesNotIncrementCounterReturnsKeyAsValue(100L);
 
-    assertThat(cache.size(), is(4));
+    assertThat(cache.size(), is(4L));
 
     Future<Long> future = IncrementsCountersIfNotInCache(3L);
 
@@ -137,20 +137,23 @@ public class CacheItTest {
       IncrementsCountersIfNotInCache(key);
     }
 
-    assertThat(cache.size(), is(100));
+    assertThat(cache.size(), is(100L));
 
     //get key 55L, make it recently used
     Thread.sleep(1000);
-    IncrementsCountersIfNotInCache(55L);
+    Future<Long> future;
+    future = IncrementsCountersIfNotInCache(55L);
+    assertThat(future.get(), is(55L));
+
     Thread.sleep(5000);
 
     //trigger cleanup
     DoesNotIncrementCounterReturnsKeyAsValue(200L);
 
     //(100-98%) 2% of 100 is 2 , plus entry with key=200L is 3
-    assertThat(cache.size(), is(2 + 1));
+    assertThat(cache.size(), is(2L + 1L));
 
-    Future<Long> future = IncrementsCountersIfNotInCache(55L);
+    future = IncrementsCountersIfNotInCache(55L);
 
     assertThat(future.get(), is(55L));
 

@@ -28,6 +28,14 @@ jacocoTestReport {
     additionalSourceDirs = files(sourceSets.main.allJava.srcDirs)
 }
 
+test {
+    testLogging {
+        showStandardStreams = true
+        // Show that tests are run in the command-line output
+        events 'started', 'passed'
+    }
+}
+
 checkstyle {
     toolVersion = '6.13'
 }

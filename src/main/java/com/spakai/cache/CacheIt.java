@@ -9,9 +9,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CacheIt<K, V> {
 
-  private final ConcurrentMap<K, Future<V>> cache = new ConcurrentHashMap<>();
+  private ConcurrentMap<K, Future<V>> cache = new ConcurrentHashMap<>();
 
-  private final Map<K, Instant> lastAccessTimeKeeper = new HashMap<>();
+  private ConcurrentMap<K, Instant> lastAccessTimeKeeper = new ConcurrentHashMap<>();
 
   private final ExecutorService pool;
 
@@ -19,7 +19,7 @@ public class CacheIt<K, V> {
 
   private final long maxSize;
 
-  private final AtomicBoolean cleanupInProgress;
+  private AtomicBoolean cleanupInProgress;
 
   private final long cacheStayAliveTimeInSecs;
 
@@ -40,7 +40,7 @@ public class CacheIt<K, V> {
   }
 
   /**
-  * Sets the size of Java Thread pool , values for percentageForCleanup,maxSize 
+  * Sets the size of Java Thread pool , values for percentageForCleanup,maxSize
   * and cacheStayAliveTimeInSecs
   *
   * @param numberOfThreads Number of Threads in the Thread Pool.
@@ -48,7 +48,7 @@ public class CacheIt<K, V> {
   * @param maxSize Maximum size of the cache
   * @param cacheStayAliveTimeInSecs Number of seconds an entry can stay in a cache
   */
-  public CacheIt(int numberOfThreads, double percentageForCleanup, long maxSize, 
+  public CacheIt(int numberOfThreads, double percentageForCleanup, long maxSize,
       long cacheStayAliveTimeInSecs) {
     this.percentageForCleanup = percentageForCleanup;
     this.maxSize = maxSize;
@@ -102,47 +102,47 @@ public class CacheIt<K, V> {
   }
 
   /**
-  * calls removeLeastUsedEntries if
+  * removeLeastUsedEntries might take a lot of time and cpu so only call it if
    * i)  Last cleanup was executed at least cacheStayAliveTimeInSecs secs ago
    * ii) No cleanup is in progress
+   * iii) Size of cache > maxSize
    *
   */
   private void possibleCleanup() {
     if (Duration.between(lastCleanup, Instant.now()).toMillis() > cacheStayAliveTimeInSecs * 0.001) {
       if (cleanupInProgress.compareAndSet(false, true)) {
-        removeLeastUsedEntries();
+        if (size() > maxSize) {
+          removeLeastUsedEntries();
+          lastCleanup = Instant.now();
+        }
         cleanupInProgress.set(false);
-        lastCleanup = Instant.now();
       }
     }
   }
 
   /**
-  * Removes X least used entries from the cache if it has exceeded cacheStayAliveTimeInSecs.
+  * Removes X least used entries from the cache.
   * X 's value is calculated as percentage_for_cleanup * maxSize which is defined during creation of cache.
   * On its default setting , when the cache reaches more than 10k in size , 100 LRU entries will be removed
   * but only if it has expired i.e > cacheStayAliveTimeInSecs.
   */
 
   private void removeLeastUsedEntries() {
-    if (size() > maxSize) {
-      lastAccessTimeKeeper.entrySet().stream()
-      .sorted(Map.Entry.comparingByValue())
-      .limit((long) ((percentageForCleanup / 100) * maxSize))
-      .filter(entry -> hasExpired(entry.getValue()))
-      .forEach(entry -> {
-        cache.remove(entry.getKey());
-        lastAccessTimeKeeper.remove(entry.getKey());
-      });
-    }
+    lastAccessTimeKeeper.entrySet().stream()
+    .sorted(Map.Entry.comparingByValue())
+    .limit((long) ((percentageForCleanup / 100) * maxSize))
+    .filter(entry -> hasExpired(entry.getValue()))
+    .forEach(e -> {
+      cache.remove(e.getKey());
+      lastAccessTimeKeeper.remove(e.getKey());
+    });
   }
 
   private boolean hasExpired(Instant instant) {
     return (Duration.between(instant, Instant.now()).toMillis() * 0.001 > cacheStayAliveTimeInSecs);
   }
 
-  public int size() {
+  public long size() {
     return cache.size();
   }
-
 }
