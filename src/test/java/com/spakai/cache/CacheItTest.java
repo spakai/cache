@@ -134,7 +134,7 @@ public class CacheItTest {
     cache = new CacheIt<>(10, 98, 100, 5);
 
     for(long key=1L; key<101L;key++) {
-      IncrementsCountersIfNotInCache(key);
+       DoesNotIncrementCounterReturnsKeyAsValue(key);
     }
 
     assertThat(cache.size(), is(100L));
